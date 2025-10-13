@@ -379,10 +379,6 @@ class Dashboard:
             print(f"Client connected: {request.sid}")
             emit('connected', {'message': 'Connected to remoteinfra Dashboard'})
 
-        @socketio.on('disconnect', namespace='/ws')
-        def ws_disconnect():
-            print(f"Client disconnected: {request.sid}")
-
         @socketio.on('join_execution', namespace='/ws')
         def join_execution_room(data):
             execution_id = data.get('execution_id')
@@ -396,6 +392,171 @@ class Dashboard:
             if execution_id:
                 leave_room(f"execution_{execution_id}")
                 emit('left_execution', {'execution_id': execution_id})
+        
+        # Terminal WebSocket handlers
+        terminal_sessions = {}  # {session_id: {'client': SSHClient, 'machine_id': str, 'channel': paramiko.Channel}}
+        
+        @socketio.on('terminal_connect', namespace='/ws')
+        def terminal_connect(data):
+            """Handle terminal connection request"""
+            machine_id = data.get('machine_id')
+            cols = data.get('cols', 80)
+            rows = data.get('rows', 24)
+            session_id = request.sid
+            
+            if not machine_id:
+                emit('terminal_error', {'error': 'Machine ID is required'})
+                return
+            
+            # Find machine
+            machine = next((m for m in self.machines if m['id'] == machine_id), None)
+            if not machine:
+                emit('terminal_error', {'error': 'Machine not found'})
+                return
+            
+            try:
+                # Create SSH client
+                client = SSHClient(
+                    machine['host'],
+                    machine['username'],
+                    machine.get('password'),
+                    machine.get('port', 22),
+                    machine.get('key')
+                )
+                client.login()
+                
+                # Create PTY channel for interactive terminal
+                channel = client.client.invoke_shell(
+                    term='xterm-256color',
+                    width=cols,
+                    height=rows
+                )
+                channel.settimeout(0.0)  # Non-blocking
+                
+                # Store session
+                terminal_sessions[session_id] = {
+                    'client': client,
+                    'machine_id': machine_id,
+                    'channel': channel
+                }
+                
+                # Start background thread to read terminal output
+                def read_terminal_output():
+                    try:
+                        while session_id in terminal_sessions:
+                            if channel.recv_ready():
+                                data = channel.recv(4096).decode('utf-8', errors='replace')
+                                socketio.emit('terminal_output', {'data': data}, 
+                                            namespace='/ws', room=session_id)
+                            elif channel.recv_stderr_ready():
+                                data = channel.recv_stderr(4096).decode('utf-8', errors='replace')
+                                socketio.emit('terminal_output', {'data': data}, 
+                                            namespace='/ws', room=session_id)
+                            else:
+                                socketio.sleep(0.01)
+                            
+                            # Check if channel is closed
+                            if channel.exit_status_ready():
+                                break
+                    except Exception as e:
+                        print(f"Terminal read error: {e}")
+                        socketio.emit('terminal_error', {'error': str(e)}, 
+                                    namespace='/ws', room=session_id)
+                    finally:
+                        # Clean up on exit
+                        if session_id in terminal_sessions:
+                            try:
+                                terminal_sessions[session_id]['channel'].close()
+                                terminal_sessions[session_id]['client'].close()
+                            except:
+                                pass
+                            del terminal_sessions[session_id]
+                        socketio.emit('terminal_disconnected', {'reason': 'Session ended'}, 
+                                    namespace='/ws', room=session_id)
+                
+                # Start output reader thread
+                socketio.start_background_task(read_terminal_output)
+                
+                # Notify client of successful connection
+                emit('terminal_connected', {'machine_id': machine_id})
+                
+            except Exception as e:
+                print(f"Terminal connection error: {e}")
+                emit('terminal_error', {'error': str(e)})
+                # Clean up on error
+                if session_id in terminal_sessions:
+                    try:
+                        terminal_sessions[session_id]['channel'].close()
+                        terminal_sessions[session_id]['client'].close()
+                    except:
+                        pass
+                    del terminal_sessions[session_id]
+        
+        @socketio.on('terminal_input', namespace='/ws')
+        def terminal_input(data):
+            """Handle terminal input from client"""
+            session_id = request.sid
+            input_data = data.get('data', '')
+            
+            if session_id not in terminal_sessions:
+                emit('terminal_error', {'error': 'Terminal session not found'})
+                return
+            
+            try:
+                channel = terminal_sessions[session_id]['channel']
+                channel.send(input_data)
+            except Exception as e:
+                print(f"Terminal input error: {e}")
+                emit('terminal_error', {'error': str(e)})
+        
+        @socketio.on('terminal_resize', namespace='/ws')
+        def terminal_resize(data):
+            """Handle terminal resize"""
+            session_id = request.sid
+            cols = data.get('cols', 80)
+            rows = data.get('rows', 24)
+            
+            if session_id not in terminal_sessions:
+                return
+            
+            try:
+                channel = terminal_sessions[session_id]['channel']
+                channel.resize_pty(width=cols, height=rows)
+            except Exception as e:
+                print(f"Terminal resize error: {e}")
+        
+        @socketio.on('terminal_disconnect', namespace='/ws')
+        def terminal_disconnect():
+            """Handle terminal disconnection"""
+            session_id = request.sid
+            
+            if session_id in terminal_sessions:
+                try:
+                    terminal_sessions[session_id]['channel'].close()
+                    terminal_sessions[session_id]['client'].close()
+                except Exception as e:
+                    print(f"Terminal disconnect error: {e}")
+                finally:
+                    del terminal_sessions[session_id]
+                
+                emit('terminal_disconnected', {'reason': 'User disconnected'})
+        
+        # Clean up terminal sessions on client disconnect
+        @socketio.on('disconnect', namespace='/ws')
+        def ws_disconnect_with_terminal_cleanup():
+            """Handle client disconnect and clean up terminal sessions"""
+            session_id = request.sid
+            print(f"Client disconnected: {session_id}")
+            
+            # Clean up any active terminal sessions
+            if session_id in terminal_sessions:
+                try:
+                    terminal_sessions[session_id]['channel'].close()
+                    terminal_sessions[session_id]['client'].close()
+                except:
+                    pass
+                finally:
+                    del terminal_sessions[session_id]
 
         # Machine management (in-memory for demo)
 
