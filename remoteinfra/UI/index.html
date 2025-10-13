@@ -11,6 +11,12 @@
         crossorigin="anonymous">
     <!-- Socket.IO client for live logs -->
 
+    <!-- XTerm.js for Terminal -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
+
     <link rel="stylesheet" href="styles.css">
 </head>
 
@@ -33,8 +39,12 @@
                     <i class="fas fa-desktop"></i>
                     <span>Machines</span>
                 </li>
-                <li class="nav-item" data-section="commands">
+                <li class="nav-item" data-section="terminal">
                     <i class="fas fa-terminal"></i>
+                    <span>Terminal</span>
+                </li>
+                <li class="nav-item" data-section="commands">
+                    <i class="fas fa-code"></i>
                     <span>Execute Commands</span>
                 </li>
                 <li class="nav-item" data-section="python">
@@ -183,6 +193,42 @@
                 </div>
                 <div class="machines-grid" id="machines-grid">
                     <!-- Machine cards will be populated here -->
+                </div>
+            </section>
+
+            <!-- Terminal Section -->
+            <section id="terminal-section" class="content-section">
+                <div class="terminal-panel">
+                    <div class="form-group" style="margin-bottom: 20px;">
+                        <label for="terminal-machine-select">Select Machine:</label>
+                        <select id="terminal-machine-select" class="form-control">
+                            <option value="">Choose a machine...</option>
+                        </select>
+                    </div>
+                    <div class="terminal-controls"
+                        style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center;">
+                        <button class="btn btn-success" id="terminal-connect-btn">
+                            <i class="fas fa-plug"></i> Connect
+                        </button>
+                        <button class="btn btn-danger" id="terminal-disconnect-btn" style="display: none;">
+                            <i class="fas fa-times"></i> Disconnect
+                        </button>
+                        <button class="btn btn-secondary" id="terminal-clear-btn">
+                            <i class="fas fa-eraser"></i> Clear
+                        </button>
+                        <button class="btn btn-secondary" id="terminal-fullscreen-btn">
+                            <i class="fas fa-expand"></i> Fullscreen
+                        </button>
+                        <div class="terminal-status" id="terminal-status" style="margin-left: auto; font-weight: 500;">
+                            <span class="status-badge status-disconnected">
+                                <i class="fas fa-circle"></i> Disconnected
+                            </span>
+                        </div>
+                    </div>
+                    <div id="terminal-container" class="terminal-container"
+                        style="height: calc(100vh - 250px); background: #000; border-radius: 4px; padding: 10px;">
+                        <!-- XTerm.js terminal will be rendered here -->
+                    </div>
                 </div>
             </section>
 

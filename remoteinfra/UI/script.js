@@ -29,6 +29,14 @@ class RemoteRunApp {
         this.runningExecutions = new Map();
         this.notificationQueue = [];
 
+        // Terminal state
+        this.terminal = null;
+        this.terminalFitAddon = null;
+        this.terminalWebLinksAddon = null;
+        this.terminalSocket = null;
+        this.terminalConnected = false;
+        this.terminalFullscreen = false;
+
         this.init();
     }
 
@@ -279,6 +287,9 @@ class RemoteRunApp {
 
         // Initialize auto-logs behavior
         this.initAutoLogsManagement();
+
+        // Initialize terminal
+        this.initTerminal();
     }
 
     // === UTILITY METHODS ===
@@ -1723,6 +1734,7 @@ class RemoteRunApp {
         // Update page title
         const titles = {
             machines: 'Machine Management',
+            terminal: 'SSH Terminal',
             commands: 'Execute Commands',
             python: 'Python Scripts',
             ansible: 'Ansible Playbooks',
@@ -1750,6 +1762,20 @@ class RemoteRunApp {
 
             // Kick off initial sequential connectivity test only once
             this.initialSequentialPing();
+        }
+
+        // Handle terminal section
+        if (section === 'terminal') {
+            // Resize terminal to fit container
+            if (this.terminal && this.terminalFitAddon) {
+                setTimeout(() => {
+                    try {
+                        this.terminalFitAddon.fit();
+                    } catch (e) {
+                        console.warn('Terminal fit error:', e);
+                    }
+                }, 100);
+            }
         }
 
         // Load existing files when switching to script sections
@@ -1929,6 +1955,7 @@ class RemoteRunApp {
     populateMachineSelects() {
         const selects = [
             'command-machine-select',
+            'terminal-machine-select',
             'python-machine-select',
             'ansible-machine-select',
             'terraform-machine-select',
@@ -7578,6 +7605,302 @@ class RemoteRunApp {
             console.error('Error getting machine OS info:', error);
             return null;
         }
+    }
+
+    // ================= TERMINAL METHODS =================
+
+    initTerminal() {
+        // Initialize XTerm.js terminal
+        if (typeof Terminal === 'undefined') {
+            console.error('XTerm.js library not loaded');
+            return;
+        }
+
+        try {
+            this.terminal = new Terminal({
+                cursorBlink: true,
+                fontSize: 14,
+                fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+                theme: {
+                    background: '#000000',
+                    foreground: '#ffffff',
+                    cursor: '#ffffff',
+                    selection: '#ffffff40',
+                },
+                scrollback: 10000,
+                tabStopWidth: 4,
+            });
+
+            // Load addons
+            if (typeof FitAddon !== 'undefined') {
+                this.terminalFitAddon = new FitAddon.FitAddon();
+                this.terminal.loadAddon(this.terminalFitAddon);
+            }
+
+            if (typeof WebLinksAddon !== 'undefined') {
+                this.terminalWebLinksAddon = new WebLinksAddon.WebLinksAddon();
+                this.terminal.loadAddon(this.terminalWebLinksAddon);
+            }
+
+            // Open terminal in container
+            const container = document.getElementById('terminal-container');
+            if (container) {
+                this.terminal.open(container);
+
+                // Initial fit
+                if (this.terminalFitAddon) {
+                    setTimeout(() => {
+                        try {
+                            this.terminalFitAddon.fit();
+                        } catch (e) {
+                            console.warn('Terminal fit error:', e);
+                        }
+                    }, 100);
+                }
+
+                // Welcome message
+                this.terminal.writeln('\x1b[1;33mremoteinfra SSH Terminal\x1b[0m');
+                this.terminal.writeln('Select a machine and click Connect to start.');
+                this.terminal.writeln('');
+            }
+
+            // Setup terminal event handlers
+            this.setupTerminalEventHandlers();
+
+            // Handle window resize
+            window.addEventListener('resize', () => {
+                if (this.terminal && this.terminalFitAddon && !this.terminalFullscreen) {
+                    setTimeout(() => {
+                        try {
+                            this.terminalFitAddon.fit();
+                            // Send resize to backend
+                            if (this.terminalConnected && this.terminalSocket) {
+                                this.terminalSocket.emit('terminal_resize', {
+                                    cols: this.terminal.cols,
+                                    rows: this.terminal.rows
+                                });
+                            }
+                        } catch (e) {
+                            console.warn('Terminal resize error:', e);
+                        }
+                    }, 100);
+                }
+            });
+
+            this.addLog('Terminal initialized successfully', 'success');
+        } catch (error) {
+            console.error('Failed to initialize terminal:', error);
+            this.addLog('Failed to initialize terminal: ' + error.message, 'error');
+        }
+    }
+
+    setupTerminalEventHandlers() {
+        // Connect button
+        const connectBtn = document.getElementById('terminal-connect-btn');
+        if (connectBtn) {
+            connectBtn.addEventListener('click', () => this.connectTerminal());
+        }
+
+        // Disconnect button
+        const disconnectBtn = document.getElementById('terminal-disconnect-btn');
+        if (disconnectBtn) {
+            disconnectBtn.addEventListener('click', () => this.disconnectTerminal());
+        }
+
+        // Clear button
+        const clearBtn = document.getElementById('terminal-clear-btn');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                if (this.terminal) {
+                    this.terminal.clear();
+                }
+            });
+        }
+
+        // Fullscreen button
+        const fullscreenBtn = document.getElementById('terminal-fullscreen-btn');
+        if (fullscreenBtn) {
+            fullscreenBtn.addEventListener('click', () => this.toggleTerminalFullscreen());
+        }
+
+        // Terminal data handler - send input to backend
+        if (this.terminal) {
+            this.terminal.onData(data => {
+                if (this.terminalConnected && this.terminalSocket) {
+                    this.terminalSocket.emit('terminal_input', { data });
+                }
+            });
+        }
+    }
+
+    async connectTerminal() {
+        const machineSelect = document.getElementById('terminal-machine-select');
+        const machineId = machineSelect?.value;
+
+        if (!machineId) {
+            alert('Please select a machine first');
+            return;
+        }
+
+        // Find machine details
+        const machine = this.machines.find(m => m.id === machineId);
+        if (!machine) {
+            alert('Machine not found');
+            return;
+        }
+
+        // Update UI
+        this.updateTerminalStatus('connecting', `Connecting to ${machine.name}...`);
+        document.getElementById('terminal-connect-btn').style.display = 'none';
+        document.getElementById('terminal-disconnect-btn').style.display = 'inline-flex';
+
+        // Clear terminal
+        if (this.terminal) {
+            this.terminal.clear();
+            this.terminal.writeln(`\x1b[1;32m→ Connecting to ${machine.name} (${machine.host})...\x1b[0m`);
+        }
+
+        try {
+            // Create WebSocket connection for terminal
+            if (!this.socket) {
+                throw new Error('Socket.IO not initialized');
+            }
+
+            this.terminalSocket = this.socket;
+
+            // Setup terminal WebSocket handlers
+            this.terminalSocket.on('terminal_output', (data) => {
+                if (this.terminal && data.data) {
+                    this.terminal.write(data.data);
+                }
+            });
+
+            this.terminalSocket.on('terminal_connected', () => {
+                this.terminalConnected = true;
+                this.updateTerminalStatus('connected', `Connected to ${machine.name}`);
+                if (this.terminal) {
+                    this.terminal.writeln(`\x1b[1;32m✓ Connected successfully!\x1b[0m`);
+                    this.terminal.writeln('');
+                }
+                this.addLog(`Terminal connected to ${machine.name}`, 'success');
+            });
+
+            this.terminalSocket.on('terminal_disconnected', (data) => {
+                this.handleTerminalDisconnect(data?.reason || 'Connection closed');
+            });
+
+            this.terminalSocket.on('terminal_error', (data) => {
+                if (this.terminal) {
+                    this.terminal.writeln(`\x1b[1;31m✗ Error: ${data.error}\x1b[0m`);
+                }
+                this.handleTerminalDisconnect(data.error);
+            });
+
+            // Send connection request
+            this.terminalSocket.emit('terminal_connect', {
+                machine_id: machineId,
+                cols: this.terminal?.cols || 80,
+                rows: this.terminal?.rows || 24
+            });
+
+        } catch (error) {
+            console.error('Terminal connection error:', error);
+            if (this.terminal) {
+                this.terminal.writeln(`\x1b[1;31m✗ Connection failed: ${error.message}\x1b[0m`);
+            }
+            this.handleTerminalDisconnect(error.message);
+        }
+    }
+
+    disconnectTerminal() {
+        if (this.terminalSocket && this.terminalConnected) {
+            this.terminalSocket.emit('terminal_disconnect');
+        }
+        this.handleTerminalDisconnect('User disconnected');
+    }
+
+    handleTerminalDisconnect(reason) {
+        this.terminalConnected = false;
+        this.updateTerminalStatus('disconnected', 'Disconnected');
+
+        if (this.terminal) {
+            this.terminal.writeln('');
+            this.terminal.writeln(`\x1b[1;33m→ Disconnected: ${reason}\x1b[0m`);
+        }
+
+        document.getElementById('terminal-connect-btn').style.display = 'inline-flex';
+        document.getElementById('terminal-disconnect-btn').style.display = 'none';
+
+        // Remove terminal event listeners
+        if (this.terminalSocket) {
+            this.terminalSocket.off('terminal_output');
+            this.terminalSocket.off('terminal_connected');
+            this.terminalSocket.off('terminal_disconnected');
+            this.terminalSocket.off('terminal_error');
+        }
+
+        this.addLog(`Terminal disconnected: ${reason}`, 'info');
+    }
+
+    updateTerminalStatus(status, message) {
+        const statusElement = document.getElementById('terminal-status');
+        if (!statusElement) return;
+
+        const icons = {
+            disconnected: 'fa-circle',
+            connecting: 'fa-spinner fa-spin',
+            connected: 'fa-circle'
+        };
+
+        const statusClasses = {
+            disconnected: 'status-disconnected',
+            connecting: 'status-connecting',
+            connected: 'status-connected'
+        };
+
+        statusElement.innerHTML = `
+            <span class="status-badge ${statusClasses[status]}">
+                <i class="fas ${icons[status]}"></i> ${message}
+            </span>
+        `;
+    }
+
+    toggleTerminalFullscreen() {
+        const container = document.getElementById('terminal-container');
+        const panel = document.querySelector('.terminal-panel');
+        const btn = document.getElementById('terminal-fullscreen-btn');
+
+        if (!container || !btn) return;
+
+        this.terminalFullscreen = !this.terminalFullscreen;
+
+        if (this.terminalFullscreen) {
+            container.classList.add('fullscreen');
+            if (panel) panel.classList.add('fullscreen');
+            btn.innerHTML = '<i class="fas fa-compress"></i> Exit Fullscreen';
+            btn.classList.add('btn-warning');
+        } else {
+            container.classList.remove('fullscreen');
+            if (panel) panel.classList.remove('fullscreen');
+            btn.innerHTML = '<i class="fas fa-expand"></i> Fullscreen';
+            btn.classList.remove('btn-warning');
+        }        // Resize terminal to fit new container size
+        setTimeout(() => {
+            if (this.terminal && this.terminalFitAddon) {
+                try {
+                    this.terminalFitAddon.fit();
+                    // Send resize to backend
+                    if (this.terminalConnected && this.terminalSocket) {
+                        this.terminalSocket.emit('terminal_resize', {
+                            cols: this.terminal.cols,
+                            rows: this.terminal.rows
+                        });
+                    }
+                } catch (e) {
+                    console.warn('Terminal fit error:', e);
+                }
+            }
+        }, 100);
     }
 
 }
