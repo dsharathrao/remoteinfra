@@ -1,7 +1,6 @@
-
 # remoteinfra
 
-`remoteinfra` is a Python library for remote command execution, file and directory transfer, Docker, Ansible, Terraform, PowerShell, and more, all over SSH. It also provides a modern Flask dashboard for managing remote servers and infrastructure from your browser or Python code. Designed for Indian IT professionals, DevOps engineers, and students, it makes remote automation and infra management easy and reliable.
+`remoteinfra` is a Python library for remote command execution, file and directory transfer, Docker, Ansible, Terraform, PowerShell, and more, all over SSH. It also provides a modern Flask dashboard for managing remote servers and infrastructure from your browser or Python code. Designed for IT professionals, DevOps engineers, Automation engineers, lab management engineers etc., it makes remote automation and infra management easy and reliable.
 
 ## OpenSSH setup
 
@@ -14,6 +13,7 @@ Windows: [OpenSSH Install Guide](https://learn.microsoft.com/en-us/windows-serve
 - **SSH Connection Management**: Connect to remote Linux or Windows machines using password or SSH key.
 - **Remote Command Execution**: Run shell, PowerShell, and Python commands/scripts on remote servers.
 - **File & Directory Transfer**: Send and receive files and folders, including recursive upload/download.
+- **Terminal support**: Support in browser terminal supprot
 - **Docker Management**: List, start, stop, remove containers/images/networks/volumes, inspect containers, view logs, and run Docker Compose projects. Manage Docker both locally (from dashboard) and remotely (over SSH).
 - **Ansible Automation**: Run playbooks and ad-hoc commands on remote hosts, with logs and status.
 - **Terraform Automation**: Run init/plan/apply/import and custom Terraform commands locally or remotely.
@@ -138,6 +138,40 @@ dashboard = Dashboard(host='localhost', port=8000)
 dashboard.serve()  # Starts the Flask dashboard
 ```
 
+#
+# Remote Terminal Access (Web-based SSH)
+#
+
+## New Feature: Browser-based SSH Terminal
+
+remoteinfra now supports accessing remote machine terminals directly from your browser, similar to PuTTY/MobaXterm. You can use interactive editors (vi, nano, etc.) and run any shell command in a real SSH session.
+
+### How it works
+- The dashboard provides a web-based terminal using xterm.js and WebSocket.
+- Connect to any configured machine and get a full interactive shell (with editor support).
+- All terminal I/O is streamed live between browser and remote host.
+
+### Usage
+1. Go to the "Terminal" tab in the dashboard UI.
+2. Select a machine and click "Connect".
+3. Use the terminal as you would in PuTTY/MobaXterm (edit files, run commands, etc.).
+4. Disconnect when done.
+
+### Supported Features
+- Full shell access (bash, sh, zsh, etc.)
+- Interactive editors (vi, nano, vim, etc.)
+- Real-time output and input
+- Resize, clear, fullscreen terminal
+- Multiple sessions (per browser tab)
+
+### Requirements
+- The remote machine must support SSH and have a shell (Linux, macOS, or Windows with OpenSSH).
+- No extra software needed on the remote host.
+
+### Troubleshooting
+- If you cannot connect, check SSH credentials and network/firewall settings.
+- For best experience, use a modern browser (Chrome, Edge, Firefox).
+
 #### Project Directory Management in Dashboard
 - Create/list/delete/rename project directories from the web UI (Projects tab)
 - Upload/download files and folders
@@ -249,6 +283,8 @@ The `remoteinfra` Dashboard is a professional web application for managing remot
    ![Run Terraform Playbooks](https://raw.githubusercontent.com/dsharathrao/remoteinfra/refs/heads/main/asserts/dashboard/dashboard6.png)
 7. Docker
    ![Manage Docker engine](https://raw.githubusercontent.com/dsharathrao/remoteinfra/refs/heads/main/asserts/dashboard/dashboard7.png)
+8. Terminal
+   ![Terminal](https://raw.githubusercontent.com/dsharathrao/remoteinfra/refs/heads/main/asserts/dashboard/dashboard8.png)
 
 Many more features coming soon...
 ---
@@ -363,14 +399,15 @@ client.run_terraform_import(work_dir='terraform/aws', resource='null_resource.ex
 ```
 
 
+
 ## Contributing
-Contributions are welcome! Please raise a pull request or open an issue on GitHub. Indian contributors and students are especially encouraged.
+Contributions are welcome! Please raise a pull request or open an issue on GitHub.
 
 ## License
 MIT License. See LICENSE file for details.
 
 ## Acknowledgments
-`remoteinfra` is built on [Paramiko](https://www.paramiko.org/) and Flask. Thanks to all contributors.
+`remoteinfra` is built on [Paramiko](https://www.paramiko.org/), xterm.js and Flask. Thanks to all contributors.
 
 ## Disclaimer
 Running remote commands/scripts can be risky. Connect only to trusted servers and follow your company security policies.
